@@ -1,6 +1,4 @@
 import Sharp, { type Sharp as Image } from "sharp";
-import fs from "node:fs/promises";
-import path from "node:path";
 
 Sharp.concurrency(parseInt(process.env.SHARP_CONCURRENCY || "1"));
 
@@ -140,7 +138,7 @@ async function squareTrim(image: Image): Promise<Image> {
   });
 }
 
-export default async function main(input: Buffer, filename: string) {
+export default async function main(input: Buffer) {
   const image = Sharp(input);
   const metadata = await image.metadata();
 
@@ -151,7 +149,6 @@ export default async function main(input: Buffer, filename: string) {
   );
   const croppedImage = await squareTrim(transparentImage);
 
-  const outputPath = path.join(__dirname, `./img/${filename}`);
   const output = await croppedImage
     .resize({
       width: 32,
@@ -163,8 +160,5 @@ export default async function main(input: Buffer, filename: string) {
     .png({ compressionLevel: 9, colors: 12 })
     .toBuffer();
 
-  await Promise.all([
-    fs.writeFile(`${outputPath}-out.png`, output),
-    fs.writeFile(`${outputPath}-in.png`, input),
-  ]);
+  return output;
 }
