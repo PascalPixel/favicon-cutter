@@ -4,7 +4,8 @@
     "noEmit": true,
     "target": "ESNext",
     "module": "NodeNext",
-    "moduleResolution": "NodeNext"
+    "moduleResolution": "NodeNext",
+    "resolveJsonModule": true
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
