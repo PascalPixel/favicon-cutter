@@ -2,131 +2,56 @@ import sharp from "sharp";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-async function detectBackgroundColor(imageBuffer: Buffer) {
+async function detectBackgroundColor(
+  imageBuffer: Buffer
+): Promise<string | null> {
   const image = sharp(imageBuffer);
   const metadata = await image.metadata();
 
-  if (
-    !metadata ||
-    typeof metadata.width === "undefined" ||
-    typeof metadata.height === "undefined"
-  ) {
+  if (!metadata.width || !metadata.height) {
     throw new Error("Image has no width or height");
   }
 
-  let topLeft: Buffer | null = null;
-  let topRight: Buffer | null = null;
-  let bottomLeft: Buffer | null = null;
-  let bottomRight: Buffer | null = null;
-  let middleTop: Buffer | null = null;
-  let middleBottom: Buffer | null = null;
-  let middleLeft: Buffer | null = null;
-  let middleRight: Buffer | null = null;
+  const positions = [
+    { left: 0, top: 0 },
+    { left: metadata.width - 1, top: 0 },
+    { left: 0, top: metadata.height - 1 },
+    { left: metadata.width - 1, top: metadata.height - 1 },
+    { left: Math.floor(metadata.width / 2), top: 0 },
+    { left: Math.floor(metadata.width / 2), top: metadata.height - 1 },
+    { left: 0, top: Math.floor(metadata.height / 2) },
+    { left: metadata.width - 1, top: Math.floor(metadata.height / 2) },
+  ];
 
-  try {
-    topLeft = await image
-      .clone()
-      .extract({ left: 0, top: 0, width: 1, height: 1 })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get topLeft");
+  const buffers = await Promise.all(
+    positions.map((pos) =>
+      image
+        .clone()
+        .extract({ left: pos.left, top: pos.top, width: 1, height: 1 })
+        .raw()
+        .toBuffer()
+        .catch(() => null)
+    )
+  );
+
+  if (buffers.includes(null)) {
+    console.error("Couldn't get all positions");
+    return null;
   }
 
-  try {
-    topRight = await image
-      .clone()
-      .extract({ left: metadata.width - 1, top: 0, width: 1, height: 1 })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get topRight");
-  }
+  const areEqual = (a: Buffer, b: Buffer) =>
+    a[3] !== 0 && a.slice(0, 3).every((val, i) => val === b[i]);
 
-  try {
-    bottomLeft = await image
-      .clone()
-      .extract({ left: 0, top: metadata.height - 1, width: 1, height: 1 })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get bottomLeft");
-  }
-
-  try {
-    bottomRight = await image
-      .clone()
-      .extract({
-        left: metadata.width - 1,
-        top: metadata.height - 1,
-        width: 1,
-        height: 1,
-      })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get bottomRight");
-  }
-
-  try {
-    middleTop = await image
-      .clone()
-      .extract({
-        left: Math.floor(metadata.width / 2),
-        top: 0,
-        width: 1,
-        height: 1,
-      })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get middleTop");
-  }
-
-  try {
-    middleBottom = await image
-      .clone()
-      .extract({
-        left: Math.floor(metadata.width / 2),
-        top: metadata.height - 1,
-        width: 1,
-        height: 1,
-      })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get middleBottom");
-  }
-
-  try {
-    middleLeft = await image
-      .clone()
-      .extract({
-        left: 0,
-        top: Math.floor(metadata.height / 2),
-        width: 1,
-        height: 1,
-      })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get middleLeft");
-  }
-
-  try {
-    middleRight = await image
-      .clone()
-      .extract({
-        left: metadata.width - 1,
-        top: Math.floor(metadata.height / 2),
-        width: 1,
-        height: 1,
-      })
-      .raw()
-      .toBuffer();
-  } catch (err) {
-    console.error("Couldn't get middleRight");
-  }
+  const [
+    topLeft,
+    topRight,
+    bottomLeft,
+    bottomRight,
+    middleTop,
+    middleBottom,
+    middleLeft,
+    middleRight,
+  ] = buffers;
 
   if (
     !topLeft ||
@@ -138,52 +63,25 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
     !middleLeft ||
     !middleRight
   ) {
-    console.error("Couldn't get all corners");
+    console.error("Couldn't get all positions");
     return null;
   }
 
-  // Are the corners the same color?
-  let bgColorMaybe: Buffer | null = null;
   if (
-    topLeft[3] !== 0 && // ignore transparent pixels
-    topLeft[0] === topRight[0] &&
-    topLeft[1] === topRight[1] &&
-    topLeft[2] === topRight[2] &&
-    topLeft[0] === bottomRight[0] &&
-    topLeft[1] === bottomRight[1] &&
-    topLeft[2] === bottomRight[2] &&
-    topLeft[0] === bottomLeft[0] &&
-    topLeft[1] === bottomLeft[1] &&
-    topLeft[2] === bottomLeft[2]
+    areEqual(topLeft, topRight) &&
+    areEqual(topLeft, bottomRight) &&
+    areEqual(topLeft, bottomLeft)
   ) {
-    // the corner edges are all the same, so use that color
-    console.log("Using corner color");
-    bgColorMaybe = topLeft;
+    return `#${topLeft.slice(0, 3).toString("hex")}`;
   } else if (
-    middleTop[3] !== 0 && // ignore transparent pixels
-    middleTop[0] === middleBottom[0] &&
-    middleTop[1] === middleBottom[1] &&
-    middleTop[2] === middleBottom[2] &&
-    middleTop[0] === middleLeft[0] &&
-    middleTop[1] === middleLeft[1] &&
-    middleTop[2] === middleLeft[2] &&
-    middleTop[0] === middleRight[0] &&
-    middleTop[1] === middleRight[1] &&
-    middleTop[2] === middleRight[2]
+    areEqual(middleTop, middleBottom) &&
+    areEqual(middleTop, middleLeft) &&
+    areEqual(middleTop, middleRight)
   ) {
-    // the middle edges are all the same, so use that color
-    console.log("Using middle color");
-    bgColorMaybe = middleTop;
+    return `#${middleTop.slice(0, 3).toString("hex")}`;
   }
 
-  if (!bgColorMaybe) {
-    // We couldn't find a solid color, so return null
-    console.error("Couldn't find a solid color");
-    return null;
-  }
-
-  // We found a solid color! Convert it to hex
-  return `#${Buffer.from(bgColorMaybe).toString("hex")}`;
+  return null;
 }
 
 async function removeSolidBackground(
@@ -192,30 +90,31 @@ async function removeSolidBackground(
 ): Promise<Buffer> {
   const image = sharp(imageBuffer);
   const metadata = await image.metadata();
-  if (
-    !metadata ||
-    typeof metadata.width === "undefined" ||
-    typeof metadata.height === "undefined"
-  ) {
+
+  if (!metadata.width || !metadata.height) {
     throw new Error("Image has no width or height");
   }
-  // find all colorHex pixels and make them transparent
+
+  const [red, green, blue] = [1, 3, 5].map((start) =>
+    parseInt(colorHex.slice(start, start + 2), 16)
+  );
+
   const { data } = await image
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
+
   for (let i = 0; i < data.length; i += 4) {
+    const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
     if (
-      data[i] >= parseInt(colorHex.slice(1, 3), 16) - 10 &&
-      data[i] <= parseInt(colorHex.slice(1, 3), 16) + 10 &&
-      data[i + 1] >= parseInt(colorHex.slice(3, 5), 16) - 10 &&
-      data[i + 1] <= parseInt(colorHex.slice(3, 5), 16) + 10 &&
-      data[i + 2] >= parseInt(colorHex.slice(5, 7), 16) - 10 &&
-      data[i + 2] <= parseInt(colorHex.slice(5, 7), 16) + 10
+      Math.abs(r - red) <= 10 &&
+      Math.abs(g - green) <= 10 &&
+      Math.abs(b - blue) <= 10
     ) {
       data[i + 3] = 0;
     }
   }
+
   return sharp(data, {
     raw: { width: metadata.width, height: metadata.height, channels: 4 },
   })
@@ -232,24 +131,26 @@ export default async function main(images: string[]) {
           data.replace("data:image/png;base64,", ""),
           "base64"
         );
+
         await fs.writeFile(
           path.join(__dirname, `./img/${filename}-in.png`),
           imageBuffer
         );
+
         const backgroundColorHex = await detectBackgroundColor(imageBuffer);
+        const outputBuffer = backgroundColorHex
+          ? await removeSolidBackground(imageBuffer, backgroundColorHex)
+          : imageBuffer;
+
         await fs.writeFile(
           path.join(__dirname, `./img/${filename}-out.png`),
-          await sharp(
-            backgroundColorHex
-              ? await removeSolidBackground(imageBuffer, backgroundColorHex)
-              : imageBuffer
-          )
+          await sharp(outputBuffer)
             .resize(32, 32)
             .png({ compressionLevel: 9, colors: 64 })
             .toBuffer()
         );
       } catch (e) {
-        console.log(e);
+        console.error(e);
       }
     })
   );
