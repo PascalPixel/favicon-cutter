@@ -24,8 +24,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   let middleRight: Buffer | null = null;
 
   try {
-    const image = sharp(imageBuffer);
     topLeft = await image
+      .clone()
       .extract({ left: 0, top: 0, width: 1, height: 1 })
       .raw()
       .toBuffer();
@@ -34,8 +34,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     topRight = await image
+      .clone()
       .extract({ left: metadata.width - 1, top: 0, width: 1, height: 1 })
       .raw()
       .toBuffer();
@@ -44,8 +44,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     bottomLeft = await image
+      .clone()
       .extract({ left: 0, top: metadata.height - 1, width: 1, height: 1 })
       .raw()
       .toBuffer();
@@ -54,8 +54,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     bottomRight = await image
+      .clone()
       .extract({
         left: metadata.width - 1,
         top: metadata.height - 1,
@@ -69,8 +69,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     middleTop = await image
+      .clone()
       .extract({
         left: Math.floor(metadata.width / 2),
         top: 0,
@@ -84,8 +84,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     middleBottom = await image
+      .clone()
       .extract({
         left: Math.floor(metadata.width / 2),
         top: metadata.height - 1,
@@ -99,8 +99,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     middleLeft = await image
+      .clone()
       .extract({
         left: 0,
         top: Math.floor(metadata.height / 2),
@@ -114,8 +114,8 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
   }
 
   try {
-    const image = sharp(imageBuffer);
     middleRight = await image
+      .clone()
       .extract({
         left: metadata.width - 1,
         top: Math.floor(metadata.height / 2),
@@ -206,9 +206,12 @@ async function removeSolidBackground(
     .toBuffer({ resolveWithObject: true });
   for (let i = 0; i < data.length; i += 4) {
     if (
-      data[i] === parseInt(colorHex.slice(1, 3), 16) &&
-      data[i + 1] === parseInt(colorHex.slice(3, 5), 16) &&
-      data[i + 2] === parseInt(colorHex.slice(5, 7), 16)
+      data[i] >= parseInt(colorHex.slice(1, 3), 16) - 10 &&
+      data[i] <= parseInt(colorHex.slice(1, 3), 16) + 10 &&
+      data[i + 1] >= parseInt(colorHex.slice(3, 5), 16) - 10 &&
+      data[i + 1] <= parseInt(colorHex.slice(3, 5), 16) + 10 &&
+      data[i + 2] >= parseInt(colorHex.slice(5, 7), 16) - 10 &&
+      data[i + 2] <= parseInt(colorHex.slice(5, 7), 16) + 10
     ) {
       data[i + 3] = 0;
     }
@@ -258,41 +261,29 @@ async function removeSolidBackground(
   ];
 
   await Promise.all(
-    images.map(async (image) => {
+    images.map(async (data, i) => {
       try {
+        const filename = "img-" + i;
         const imageBuffer = Buffer.from(
-          image.replace("data:image/png;base64,", ""),
+          data.replace("data:image/png;base64,", ""),
           "base64"
         );
-
-        const filename = image
-          .slice(128, 128 + 16)
-          .replace(/[^a-zA-Z0-9]/g, "")
-          .toLowerCase()
-          .slice(0, 8);
-
         await fs.writeFile(
           path.join(__dirname, `./img/${filename}-in.png`),
           imageBuffer
         );
-
         const backgroundColorHex = await detectBackgroundColor(imageBuffer);
-
-        if (backgroundColorHex) {
-          const newImageBuffer = await removeSolidBackground(
-            imageBuffer,
+        await fs.writeFile(
+          path.join(__dirname, `./img/${filename}-out.png`),
+          await sharp(
             backgroundColorHex
-          );
-          await fs.writeFile(
-            path.join(__dirname, `./img/${filename}-out.png`),
-            newImageBuffer
-          );
-        } else {
-          await fs.writeFile(
-            path.join(__dirname, `./img/${filename}-out.png`),
-            imageBuffer
-          );
-        }
+              ? await removeSolidBackground(imageBuffer, backgroundColorHex)
+              : imageBuffer
+          )
+            .resize(32, 32)
+            .png({ compressionLevel: 9, colors: 64 })
+            .toBuffer()
+        );
       } catch (e) {
         console.log(e);
       }
