@@ -14,25 +14,176 @@ async function detectBackgroundColor(imageBuffer: Buffer) {
     throw new Error("Image has no width or height");
   }
 
-  // Assume top-left pixel as potential background
-  const [r, g, b] = await image
-    .extract({ left: 0, top: 0, width: 1, height: 1 })
-    .raw()
-    .toBuffer();
+  let topLeft: Buffer | null = null;
+  let topRight: Buffer | null = null;
+  let bottomLeft: Buffer | null = null;
+  let bottomRight: Buffer | null = null;
+  let middleTop: Buffer | null = null;
+  let middleBottom: Buffer | null = null;
+  let middleLeft: Buffer | null = null;
+  let middleRight: Buffer | null = null;
 
-  const threshold = 10;
-  const allPixels = await image.raw().toBuffer();
-  for (let i = 0; i < allPixels.length; i += 4) {
-    if (
-      Math.abs(allPixels[i] - r) > threshold ||
-      Math.abs(allPixels[i + 1] - g) > threshold ||
-      Math.abs(allPixels[i + 2] - b) > threshold
-    ) {
-      return null; // Image has different colors
-    }
+  try {
+    const image = sharp(imageBuffer);
+    topLeft = await image
+      .extract({ left: 0, top: 0, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get topLeft");
   }
 
-  return `#${Buffer.from([r, g, b]).toString("hex")}`;
+  try {
+    const image = sharp(imageBuffer);
+    topRight = await image
+      .extract({ left: metadata.width - 1, top: 0, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get topRight");
+  }
+
+  try {
+    const image = sharp(imageBuffer);
+    bottomLeft = await image
+      .extract({ left: 0, top: metadata.height - 1, width: 1, height: 1 })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get bottomLeft");
+  }
+
+  try {
+    const image = sharp(imageBuffer);
+    bottomRight = await image
+      .extract({
+        left: metadata.width - 1,
+        top: metadata.height - 1,
+        width: 1,
+        height: 1,
+      })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get bottomRight");
+  }
+
+  try {
+    const image = sharp(imageBuffer);
+    middleTop = await image
+      .extract({
+        left: Math.floor(metadata.width / 2),
+        top: 0,
+        width: 1,
+        height: 1,
+      })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get middleTop");
+  }
+
+  try {
+    const image = sharp(imageBuffer);
+    middleBottom = await image
+      .extract({
+        left: Math.floor(metadata.width / 2),
+        top: metadata.height - 1,
+        width: 1,
+        height: 1,
+      })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get middleBottom");
+  }
+
+  try {
+    const image = sharp(imageBuffer);
+    middleLeft = await image
+      .extract({
+        left: 0,
+        top: Math.floor(metadata.height / 2),
+        width: 1,
+        height: 1,
+      })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get middleLeft");
+  }
+
+  try {
+    const image = sharp(imageBuffer);
+    middleRight = await image
+      .extract({
+        left: metadata.width - 1,
+        top: Math.floor(metadata.height / 2),
+        width: 1,
+        height: 1,
+      })
+      .raw()
+      .toBuffer();
+  } catch (err) {
+    console.error("Couldn't get middleRight");
+  }
+
+  if (
+    !topLeft ||
+    !topRight ||
+    !bottomLeft ||
+    !bottomRight ||
+    !middleTop ||
+    !middleBottom ||
+    !middleLeft ||
+    !middleRight
+  ) {
+    console.error("Couldn't get all corners");
+    return null;
+  }
+
+  // Are the corners the same color?
+  let bgColorMaybe: Buffer | null = null;
+  if (
+    topLeft[3] !== 0 && // ignore transparent pixels
+    topLeft[0] === topRight[0] &&
+    topLeft[1] === topRight[1] &&
+    topLeft[2] === topRight[2] &&
+    topLeft[0] === bottomRight[0] &&
+    topLeft[1] === bottomRight[1] &&
+    topLeft[2] === bottomRight[2] &&
+    topLeft[0] === bottomLeft[0] &&
+    topLeft[1] === bottomLeft[1] &&
+    topLeft[2] === bottomLeft[2]
+  ) {
+    // the corner edges are all the same, so use that color
+    console.log("Using corner color");
+    bgColorMaybe = topLeft;
+  } else if (
+    middleTop[3] !== 0 && // ignore transparent pixels
+    middleTop[0] === middleBottom[0] &&
+    middleTop[1] === middleBottom[1] &&
+    middleTop[2] === middleBottom[2] &&
+    middleTop[0] === middleLeft[0] &&
+    middleTop[1] === middleLeft[1] &&
+    middleTop[2] === middleLeft[2] &&
+    middleTop[0] === middleRight[0] &&
+    middleTop[1] === middleRight[1] &&
+    middleTop[2] === middleRight[2]
+  ) {
+    // the middle edges are all the same, so use that color
+    console.log("Using middle color");
+    bgColorMaybe = middleTop;
+  }
+
+  if (!bgColorMaybe) {
+    // We couldn't find a solid color, so return null
+    console.error("Couldn't find a solid color");
+    return null;
+  }
+
+  // We found a solid color! Convert it to hex
+  return `#${Buffer.from(bgColorMaybe).toString("hex")}`;
 }
 
 async function removeSolidBackground(
@@ -114,11 +265,14 @@ async function removeSolidBackground(
           "base64"
         );
 
+        const filename = image
+          .slice(128, 128 + 16)
+          .replace(/[^a-zA-Z0-9]/g, "")
+          .toLowerCase()
+          .slice(0, 8);
+
         await fs.writeFile(
-          path.join(
-            __dirname,
-            `./img/${encodeURI(image.slice(128, 128 + 8))}-in.png`
-          ),
+          path.join(__dirname, `./img/${filename}-in.png`),
           imageBuffer
         );
 
@@ -130,22 +284,14 @@ async function removeSolidBackground(
             backgroundColorHex
           );
           await fs.writeFile(
-            path.join(
-              __dirname,
-              `./img/${encodeURI(image.slice(128, 128 + 8))}-out.png`
-            ),
+            path.join(__dirname, `./img/${filename}-out.png`),
             newImageBuffer
           );
-          console.log(`Removed color: ${backgroundColorHex}`);
         } else {
           await fs.writeFile(
-            path.join(
-              __dirname,
-              `./img/${encodeURI(image.slice(128, 128 + 8))}-out.png`
-            ),
+            path.join(__dirname, `./img/${filename}-out.png`),
             imageBuffer
           );
-          console.log("No solid background found");
         }
       } catch (e) {
         console.log(e);
