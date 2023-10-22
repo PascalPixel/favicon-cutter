@@ -4,16 +4,20 @@ import path from "node:path";
 
 Sharp.concurrency(parseInt(process.env.SHARP_CONCURRENCY || "1"));
 
-async function detectBackgroundColor(image: Image): Promise<string | null> {
+async function detectBackgroundColor(
+  image: Image,
+  width: number,
+  height: number
+): Promise<string | null> {
   const positions = [
     { left: 0, top: 0 },
-    { left: 31, top: 0 },
-    { left: 0, top: 31 },
-    { left: 31, top: 31 },
-    { left: 16, top: 0 },
-    { left: 16, top: 31 },
-    { left: 0, top: 16 },
-    { left: 31, top: 16 },
+    { left: width - 1, top: 0 },
+    { left: 0, top: width - 1 },
+    { left: width - 1, top: height - 1 },
+    { left: Math.floor(width / 2), top: 0 },
+    { left: Math.floor(width / 2), top: height - 1 },
+    { left: 0, top: Math.floor(height / 2) },
+    { left: width - 1, top: Math.floor(height / 2) },
   ];
 
   const crops = await Promise.all(
@@ -59,8 +63,12 @@ async function detectBackgroundColor(image: Image): Promise<string | null> {
 
 async function removeSolidBackground(
   image: Image,
-  colorHex: string
+  colorHex: string | null
 ): Promise<Image> {
+  if (!colorHex) {
+    return image;
+  }
+
   const [red, green, blue] = [1, 3, 5].map((start) =>
     parseInt(colorHex.slice(start, start + 2), 16)
   );
@@ -76,6 +84,9 @@ async function removeSolidBackground(
       Math.abs(g - green) <= 10 &&
       Math.abs(b - blue) <= 10
     ) {
+      data[i + 0] = 0;
+      data[i + 1] = 0;
+      data[i + 2] = 0;
       data[i + 3] = 0;
     }
   }
@@ -85,23 +96,67 @@ async function removeSolidBackground(
   });
 }
 
-export default async function main(data: Buffer, filename: string) {
-  const image = Sharp(data).resize({
-    width: 32,
-    height: 32,
-    fit: "contain",
-    kernel: "nearest",
+async function squareTrim(image: Image): Promise<Image> {
+  const { data, info } = await image.raw().toBuffer({
+    resolveWithObject: true,
   });
 
-  await fs.writeFile(path.join(__dirname, `./img/${filename}-in.png`), data);
+  let left = info.width;
+  let top = info.height;
+  let right = 0;
+  let bottom = 0;
 
-  const backgroundColorHex = await detectBackgroundColor(image);
-  const outputImage = backgroundColorHex
-    ? await removeSolidBackground(image, backgroundColorHex)
-    : image;
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      const i = (y * info.width + x) * 4;
+      if (data[i + 3] !== 0) {
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x);
+        bottom = Math.max(bottom, y);
+      }
+    }
+  }
 
-  await fs.writeFile(
-    path.join(__dirname, `./img/${filename}-out.png`),
-    await outputImage.png({ compressionLevel: 9, colors: 64 }).toBuffer()
+  const smallest = Math.min(
+    left,
+    top,
+    info.width - right,
+    info.height - bottom
   );
+
+  return image.extract({
+    left: smallest,
+    top: smallest,
+    width: info.width - smallest * 2,
+    height: info.height - smallest * 2,
+  });
+}
+
+export default async function main(input: Buffer, filename: string) {
+  const image = Sharp(input);
+  const metadata = await image.metadata();
+  if (!metadata.width || !metadata.height) throw new Error("Invalid image");
+  const backgroundColorHex = await detectBackgroundColor(
+    image,
+    metadata.width,
+    metadata.height
+  );
+  const transparentImage = await removeSolidBackground(
+    image,
+    backgroundColorHex
+  );
+  const croppedImage = await squareTrim(transparentImage);
+  const output = await croppedImage
+    .resize({
+      width: 32,
+      height: 32,
+      fit: "contain",
+      background: backgroundColorHex || { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .flatten(backgroundColorHex ? { background: backgroundColorHex } : false)
+    .png({ compressionLevel: 9, colors: 12 })
+    .toBuffer();
+  await fs.writeFile(path.join(__dirname, `./img/${filename}-out.png`), output);
+  await fs.writeFile(path.join(__dirname, `./img/${filename}-in.png`), input);
 }
